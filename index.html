@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô phỏng Hệ sinh thái Cần Giờ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Nền xanh đậm */
+        }
+        .control-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        canvas {
+            background-color: #1E293B; /* Màu nước bùn/tối */
+            border-radius: 0.5rem;
+            border: 1px solid #334155;
+            transition: background-color 1s linear;
+        }
+        .btn { font-bold: py-2 px-4 rounded-lg transition-all duration-200 transform hover:scale-105; }
+        .btn-plankton { background-color: #22C55E; color: white; }
+        .btn-plankton:hover { background-color: #16A34A; }
+        .btn-crab { background-color: #F97316; color: white; }
+        .btn-crab:hover { background-color: #EA580C; }
+        .btn-monkey { background-color: #A16207; color: white; }
+        .btn-monkey:hover { background-color: #854D0E; }
+        .btn-mangrove { background-color: #15803D; color: white; }
+        .btn-mangrove:hover { background-color: #166534; }
+        .btn-reset { background-color: #EF4444; color: white; }
+        .btn-reset:hover { background-color: #DC2626; }
+    </style>
+</head>
+<body class="text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-6xl mx-auto">
+        <header class="text-center mb-6">
+            <h1 class="text-4xl md:text-5xl font-bold text-white">Hệ sinh thái Rừng ngập mặn Cần Giờ</h1>
+            <p class="text-lg text-gray-400 mt-2">Mô phỏng động lực học với yếu tố nơi trú ẩn.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Canvas Hệ sinh thái -->
+            <div class="lg:col-span-2 w-full aspect-video rounded-lg shadow-2xl">
+                 <canvas id="ecosystemCanvas"></canvas>
+            </div>
+
+            <!-- Bảng điều khiển và thông tin -->
+            <div class="flex flex-col gap-4">
+                <div class="control-panel p-6 rounded-lg shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Bảng điều khiển</h2>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="addPlankton" class="btn btn-plankton">Thêm Tảo</button>
+                        <button id="addCrab" class="btn btn-crab">Thêm Cua</button>
+                        <button id="addMonkey" class="btn btn-monkey">Thêm Khỉ</button>
+                        <button id="addMangrove" class="btn btn-mangrove">Thêm Cây Đước</button>
+                        <button id="resetSim" class="btn btn-reset col-span-2">Chơi lại</button>
+                    </div>
+                </div>
+
+                <div class="control-panel p-6 rounded-lg shadow-lg flex-grow">
+                    <h2 class="text-2xl font-bold mb-4 border-b border-gray-600 pb-2">Quần thể</h2>
+                    <div id="population-stats" class="space-y-3 text-lg">
+                        <p>🌿 Tảo/Phiêu sinh vật: <span id="plankton-count" class="font-bold text-green-400">0</span></p>
+                        <p>🦀 Cua: <span id="crab-count" class="font-bold text-orange-400">0</span></p>
+                        <p>🐒 Khỉ: <span id="monkey-count" class="font-bold text-yellow-600">0</span></p>
+                        <p>🌳 Cây Đước (Nơi trú ẩn): <span id="mangrove-count" class="font-bold text-green-600">0</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Biểu đồ quần thể -->
+        <div class="mt-6 w-full bg-gray-800 p-4 rounded-lg shadow-2xl">
+             <h2 class="text-2xl font-bold mb-4 text-center">Lịch sử Quần thể</h2>
+             <canvas id="populationChart"></canvas>
+        </div>
+
+    </div>
+
+    <script>
+        // === Thiết lập Canvas và Context ===
+        const ecoCanvas = document.getElementById('ecosystemCanvas');
+        const ecoCtx = ecoCanvas.getContext('2d');
+        const chartCanvas = document.getElementById('populationChart');
+        const chartCtx = chartCanvas.getContext('2d');
+
+        // Điều chỉnh canvas theo kích thước màn hình
+        function resizeCanvases() {
+            const ecoRect = ecoCanvas.parentElement.getBoundingClientRect();
+            ecoCanvas.width = ecoRect.width;
+            ecoCanvas.height = ecoRect.height;
+            ecoCtx.textAlign = "center";
+            ecoCtx.textBaseline = "middle";
+
+            const chartRect = chartCanvas.parentElement.getBoundingClientRect();
+            chartCanvas.width = chartRect.width - 32; // Trừ padding
+            chartCanvas.height = 200; // Chiều cao cố định
+        }
+        window.addEventListener('resize', resizeCanvases);
+        resizeCanvases();
+
+        // === Trạng thái mô phỏng ===
+        let plankton = [];
+        let crabs = [];
+        let monkeys = [];
+        let mangroves = [];
+        let history = [];
+        const MAX_HISTORY = 200;
+        const SHELTER_DISTANCE = 40; // Khoảng cách an toàn từ cây đước cho cua
+
+        // === Lớp thực thể (Entity) ===
+        class Entity {
+            constructor(x, y, size) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.energy = 100;
+                this.age = 0;
+            }
+
+            draw(ctx) {
+                ctx.font = `${this.size}px Arial`;
+                ctx.fillText(this.emoji, this.x, this.y);
+            }
+            
+            move() {
+                this.x += Math.random() * 4 - 2;
+                this.y += Math.random() * 4 - 2;
+
+                // Xử lý va chạm tường
+                if (this.x < this.size/2) this.x = this.size/2;
+                if (this.x > ecoCanvas.width - this.size/2) this.x = ecoCanvas.width - this.size/2;
+                if (this.y < this.size/2) this.y = this.size/2;
+                if (this.y > ecoCanvas.height - this.size/2) this.y = ecoCanvas.height - this.size/2;
+            }
+        }
+
+        class Plankton extends Entity {
+            constructor(x, y) { super(x, y, 15); this.emoji = '🌿'; this.energy = 25; }
+            move() {} // Tảo không di chuyển
+        }
+        
+        class Mangrove extends Entity {
+            constructor(x, y) { super(x, y, 30); this.emoji = '🌳'; }
+            move() {} // Cây không di chuyển
+        }
+
+        class Crab extends Entity {
+            constructor(x, y) { super(x, y, 20); this.emoji = '🦀'; this.maxAge = 600; }
+            
+            update(plankton, crabs) {
+                this.move();
+                this.energy -= 0.2;
+                this.age++;
+
+                for (let i = plankton.length - 1; i >= 0; i--) {
+                    const p = plankton[i];
+                    const dist = Math.hypot(this.x - p.x, this.y - p.y);
+                    if (dist < this.size / 2 + p.size / 2) {
+                        this.energy += p.energy;
+                        plankton.splice(i, 1);
+                        break;
+                    }
+                }
+
+                if (this.energy > 150) { this.energy -= 100; crabs.push(new Crab(this.x, this.y)); }
+            }
+        }
+
+        class Monkey extends Entity {
+            constructor(x, y) { super(x, y, 25); this.emoji = '🐒'; this.maxAge = 1200; }
+            
+            update(crabs, monkeys, mangroves) {
+                this.move();
+                this.energy -= 0.4;
+                this.age++;
+
+                // Săn cua
+                for (let i = crabs.length - 1; i >= 0; i--) {
+                    const c = crabs[i];
+                    
+                    // KIỂM TRA NƠI TRÚ ẨN
+                    let isSafe = false;
+                    for (const m of mangroves) {
+                        if (Math.hypot(c.x - m.x, c.y - m.y) < SHELTER_DISTANCE) {
+                            isSafe = true;
+                            break;
+                        }
+                    }
+
+                    if (isSafe) continue; // Bỏ qua nếu cua đang an toàn
+
+                    const dist = Math.hypot(this.x - c.x, this.y - c.y);
+                    if (dist < this.size / 2 + c.size / 2) {
+                        this.energy += 60;
+                        crabs.splice(i, 1);
+                        break;
+                    }
+                }
+
+                if (this.energy > 200) { this.energy -= 150; monkeys.push(new Monkey(this.x, this.y)); }
+            }
+        }
+        
+        // === Hàm điều khiển ===
+        function addOrganisms(type, count) {
+            for (let i = 0; i < count; i++) {
+                const x = Math.random() * ecoCanvas.width;
+                const y = Math.random() * ecoCanvas.height;
+                if (type === 'plankton') plankton.push(new Plankton(x, y));
+                if (type === 'crab') crabs.push(new Crab(x, y));
+                if (type === 'monkey') monkeys.push(new Monkey(x, y));
+                if (type === 'mangrove') mangroves.push(new Mangrove(x, y));
+            }
+        }
+
+        function resetSimulation() {
+            plankton = []; crabs = []; monkeys = []; mangroves = []; history = [];
+            addOrganisms('mangrove', 10);
+            addOrganisms('plankton', 60);
+            addOrganisms('crab', 15);
+            addOrganisms('monkey', 4);
+        }
+
+        document.getElementById('addPlankton').addEventListener('click', () => addOrganisms('plankton', 10));
+        document.getElementById('addCrab').addEventListener('click', () => addOrganisms('crab', 2));
+        document.getElementById('addMonkey').addEventListener('click', () => addOrganisms('monkey', 1));
+        document.getElementById('addMangrove').addEventListener('click', () => addOrganisms('mangrove', 3));
+        document.getElementById('resetSim').addEventListener('click', resetSimulation);
+
+        // === Hàm vẽ biểu đồ ===
+        function drawChart() {
+            chartCtx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+            const maxPop = Math.max(10, ...history.flatMap(h => [h.plankton, h.crabs, h.monkeys]));
+            const stepX = chartCanvas.width / Math.max(1, history.length - 1);
+            const stepY = chartCanvas.height / maxPop;
+
+            function drawLine(data, color) {
+                chartCtx.beginPath();
+                chartCtx.strokeStyle = color;
+                chartCtx.lineWidth = 2;
+                if(data.length === 0) return;
+                chartCtx.moveTo(0, chartCanvas.height - data[0] * stepY);
+                for (let i = 1; i < data.length; i++) {
+                    chartCtx.lineTo(i * stepX, chartCanvas.height - data[i] * stepY);
+                }
+                chartCtx.stroke();
+            }
+
+            if (history.length > 1) {
+                drawLine(history.map(h => h.plankton), '#22C55E');
+                drawLine(history.map(h => h.crabs), '#F97316');
+                drawLine(history.map(h => h.monkeys), '#A16207');
+            }
+        }
+
+        // === Vòng lặp chính của mô phỏng ===
+        let frameCount = 0;
+        function animate() {
+            ecoCtx.clearRect(0, 0, ecoCanvas.width, ecoCanvas.height);
+
+            if (Math.random() < 0.3 && plankton.length < 300) { addOrganisms('plankton', 1); }
+            
+            mangroves.forEach(m => m.draw(ecoCtx));
+            plankton.forEach(p => p.draw(ecoCtx));
+
+            crabs = crabs.filter(c => c.energy > 0 && c.age < c.maxAge);
+            crabs.forEach(c => { c.update(plankton, crabs); c.draw(ecoCtx); });
+
+            monkeys = monkeys.filter(m => m.energy > 0 && m.age < m.maxAge);
+            monkeys.forEach(m => { m.update(crabs, monkeys, mangroves); m.draw(ecoCtx); });
+
+            document.getElementById('plankton-count').textContent = plankton.length;
+            document.getElementById('crab-count').textContent = crabs.length;
+            document.getElementById('monkey-count').textContent = monkeys.length;
+            document.getElementById('mangrove-count').textContent = mangroves.length;
+
+            if (frameCount % 30 === 0) {
+                history.push({ plankton: plankton.length, crabs: crabs.length, monkeys: monkeys.length });
+                if (history.length > MAX_HISTORY) { history.shift(); }
+                drawChart();
+            }
+            
+            frameCount++;
+            requestAnimationFrame(animate);
+        }
+
+        // Bắt đầu mô phỏng
+        resetSimulation();
+        animate();
+    </script>
+</body>
+</html>
