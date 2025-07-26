@@ -1,4 +1,43 @@
-<!DOCTYPE html>
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -9,32 +48,141 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; }
-        .control-panel { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.75rem; }
-        .canvas-container { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 0.5rem;}
-        #ecosystemCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 1px solid #334155; transition: background-color 1s linear; }
-        #notification-area { position: absolute; top: 1rem; left: 1rem; z-index: 10; display: flex; flex-direction: column; gap: 0.5rem; }
-        .notification { background: rgba(23, 37, 84, 0.8); backdrop-filter: blur(5px); color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; border-left: 4px solid #3B82F6; animation: slideIn 0.5s ease-out forwards, fadeOut 0.5s ease-in 4.5s forwards; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%);
+            color: #ffffff;
+            overscroll-behavior: none;
+        }
+        .control-panel {
+            background: rgba(30, 41, 59, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 1rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            overflow: hidden;
+            border-radius: 1rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+        #ecosystemCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: 1px solid #334155;
+            transition: background-color 1s ease;
+        }
+        #notification-area {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        .notification {
+            background: rgba(23, 37, 84, 0.9);
+            backdrop-filter: blur(8px);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            border-left: 6px solid #3B82F6;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            animation: slideIn 0.5s ease-out forwards, fadeOut 0.5s ease-in 4.5s forwards;
+            font-size: 0.9rem;
+        }
         @keyframes slideIn { from { transform: translateX(-100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; transform: translateY(-20px); } }
-        #pollution-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transition: all duration-1000; background-color: rgba(139, 69, 19, 0); }
-        .btn { font-weight: bold; padding: 0.5rem 1rem; border-radius: 0.5rem; transition: all 0.2s; transform: scale(1); border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
-        .btn:hover:not(:disabled) { transform: scale(1.05); filter: brightness(1.1); }
-        .btn:disabled { background-color: #4B5563 !important; cursor: not-allowed; opacity: 0.7; }
-        .tab-btn { padding: 0.5rem; border-radius: 0.5rem; transition: background-color 0.2s; width: 2.5rem; text-align: center;}
-        .tab-btn.active { background-color: #3B82F6; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .lang-btn { background-color: #374151; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; }
-        .lang-btn.active { background-color: #3B82F6; }
+        #pollution-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            transition: background-color 1s ease;
+            background-color: rgba(139, 69, 19, 0);
+        }
+        .btn {
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            transition: all 0.3s ease;
+            transform: scale(1);
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        .btn:hover:not(:disabled) {
+            transform: scale(1.05);
+            filter: brightness(1.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        .btn:disabled {
+            background-color: #4B5563 !important;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        .tab-btn {
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            transition: all 0.3s ease;
+            width: 3rem;
+            text-align: center;
+            background-color: #1E293B;
+        }
+        .tab-btn.active {
+            background-color: #3B82F6;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.5);
+        }
+        .tab-btn:hover:not(.active) {
+            background-color: #334155;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .lang-btn {
+            background-color: #374151;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            transition: all 0.3s ease;
+        }
+        .lang-btn.active {
+            background-color: #3B82F6;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.5);
+        }
+        .lang-btn:hover:not(.active) {
+            background-color: #4B5563;
+        }
+        .chart-container {
+            background: rgba(30, 41, 59, 0.95);
+            border-radius: 0.75rem;
+            padding: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
     </style>
 </head>
-<body class="text-white flex flex-col items-center justify-center min-h-screen p-2 md:p-4">
-
+<body class="text-white flex flex-col items-center justify-center min-h-screen p-4 md:p-6">
     <div class="w-full max-w-7xl mx-auto">
-        <header class="text-center mb-4 relative">
-            <h1 class="text-3xl md:text-5xl font-bold text-white" data-lang-key="title"></h1>
-            <p class="text-md md:text-lg text-gray-400 mt-2" data-lang-key="subtitle"></p>
+        <header class="text-center mb-6 relative">
+            <h1 class="text-4xl md:text-5xl font-bold text-white" data-lang-key="title"></h1>
+            <p class="text-lg md:text-xl text-gray-300 mt-2" data-lang-key="subtitle"></p>
             <div id="language-switcher" class="absolute top-0 right-0 flex gap-2">
                 <button class="lang-btn" data-lang="vi">VI</button>
                 <button class="lang-btn" data-lang="en">EN</button>
@@ -42,9 +190,9 @@
             </div>
         </header>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <!-- Canvas Hệ sinh thái -->
-            <div class="lg:col-span-2 w-full shadow-2xl">
+            <div class="lg:col-span-2 w-full">
                 <div class="canvas-container">
                     <div id="notification-area"></div>
                     <canvas id="ecosystemCanvas"></canvas>
@@ -53,9 +201,9 @@
             </div>
 
             <!-- Bảng điều khiển với Tabs -->
-            <div class="flex flex-col gap-4">
-                <div class="control-panel p-4">
-                    <div class="flex justify-around border-b border-gray-600 mb-3">
+            <div class="flex flex-col gap-6">
+                <div class="control-panel p-6">
+                    <div class="flex justify-around border-b border-gray-600 mb-4">
                         <button class="tab-btn active" data-tab="guide" data-lang-title="guide_tab_title"><i class="fas fa-book"></i></button>
                         <button class="tab-btn" data-tab="foodchain" data-lang-title="foodchain_tab_title"><i class="fas fa-sitemap"></i></button>
                         <button class="tab-btn" data-tab="stats" data-lang-title="stats_tab_title"><i class="fas fa-chart-bar"></i></button>
@@ -65,21 +213,28 @@
                     </div>
 
                     <!-- Tab Hướng dẫn -->
-                    <div id="guide-tab" class="tab-content active text-sm space-y-2">
-                        <h3 class="font-bold text-lg" data-lang-key="guide_welcome"></h3>
+                    <div id="guide-tab" class="tab-content active text-sm space-y-3">
+                        <h3 class="font-bold text-xl" data-lang-key="guide_welcome"></h3>
                         <p><strong class="text-pink-400" data-lang-key="guide_reproduction_title"></strong> <span data-lang-key="guide_reproduction_desc"></span></p>
                         <p><strong class="text-sky-400" data-lang-key="guide_migration_title"></strong> <span data-lang-key="guide_migration_desc"></span></p>
                         <p><strong class="text-purple-400" data-lang-key="guide_csr_title"></strong> <span data-lang-key="guide_csr_desc"></span></p>
                         <p><strong class="text-green-400" data-lang-key="guide_forest_title"></strong> <span data-lang-key="guide_forest_desc"></span></p>
+                        <h4 class="font-bold text-lg mt-4" data-lang-key="guide_management_title"></h4>
+                        <ul class="list-disc list-inside space-y-2">
+                            <li><strong data-lang-key="guide_pollution_title"></strong> <span data-lang-key="guide_pollution_desc"></span></li>
+                            <li><strong data-lang-key="guide_forest_growth_title"></strong> <span data-lang-key="guide_forest_growth_desc"></span></li>
+                            <li><strong data-lang-key="guide_reproduction_management_title"></strong> <span data-lang-key="guide_reproduction_management_desc"></span></li>
+                            <li><strong data-lang-key="guide_finance_title"></strong> <span data-lang-key="guide_finance_desc"></span></li>
+                        </ul>
                     </div>
-                    
+
                     <!-- Tab Chuỗi Thức ăn -->
-                    <div id="foodchain-tab" class="tab-content text-sm space-y-3">
-                        <h3 class="font-bold text-lg" data-lang-key="foodchain_title"></h3>
+                    <div id="foodchain-tab" class="tab-content text-sm space-y-4">
+                        <h3 class="font-bold text-xl" data-lang-key="foodchain_title"></h3>
                         <div><strong class="text-green-400" data-lang-key="producer"></strong>: 🌿 <span data-lang-key="algae"></span> (<span data-lang-key="autotroph"></span>)</div>
                         <div><strong class="text-orange-400" data-lang-key="primary_consumer"></strong>: 🦀 <span data-lang-key="crab"></span> & 🐟 <span data-lang-key="fish"></span> (<span data-lang-key="eat_algae"></span>)</div>
-                        <div><strong class="text-red-400" data-lang-key="secondary_consumer"></strong>: 
-                            <ul class="list-disc list-inside ml-2">
+                        <div><strong class="text-red-400" data-lang-key="secondary_consumer"></strong>:
+                            <ul class="list-disc list-inside ml-3">
                                 <li>🐒 <span data-lang-key="monkey"></span> (<span data-lang-key="eat_crab_fish"></span>)</li>
                                 <li>🐦 <span data-lang-key="bird"></span> (<span data-lang-key="eat_fish"></span>)</li>
                             </ul>
@@ -87,53 +242,57 @@
                     </div>
 
                     <!-- Tab Thống kê -->
-                    <div id="stats-tab" class="tab-content space-y-1 text-base">
-                         <p>🌿 <span data-lang-key="algae"></span>: <span id="plankton-count" class="font-bold text-green-400">0</span></p>
-                         <p>🦀 <span data-lang-key="crab"></span>: <span id="crab-count" class="font-bold text-orange-400">0</span></p>
-                         <p>🐟 <span data-lang-key="fish"></span>: <span id="fish-count" class="font-bold text-blue-400">0</span></p>
-                         <p>🐒 <span data-lang-key="monkey"></span>: <span id="monkey-count" class="font-bold text-yellow-600">0</span></p>
-                         <p>🐦 <span data-lang-key="bird"></span>: <span id="bird-count" class="font-bold text-gray-300">0</span></p>
-                         <p>🌱 <span data-lang-key="sapling"></span>: <span id="sapling-count" class="font-bold text-lime-400">0</span></p>
-                         <p>🌳 <span data-lang-key="mangrove"></span>: <span id="mangrove-count" class="font-bold text-green-600">0</span></p>
-                         <p>🌴 <span data-lang-key="nipa_palm"></span>: <span id="nipa-palm-count" class="font-bold text-teal-400">0</span></p>
-                         <p class="text-red-400">🔥 <span data-lang-key="pollution"></span>: <span id="pollution-display" class="font-bold">0%</span></p>
+                    <div id="stats-tab" class="tab-content space-y-2 text-base">
+                        <p>🌿 <span data-lang-key="algae"></span>: <span id="plankton-count" class="font-bold text-green-400">0</span></p>
+                        <p>🦀 <span data-lang-key="crab"></span>: <span id="crab-count" class="font-bold text-orange-400">0</span></p>
+                        <p>🐟 <span data-lang-key="fish"></span>: <span id="fish-count" class="font-bold text-blue-400">0</span></p>
+                        <p>🐒 <span data-lang-key="monkey"></span>: <span id="monkey-count" class="font-bold text-yellow-600">0</span></p>
+                        <p>🐦 <span data-lang-key="bird"></span>: <span id="bird-count" class="font-bold text-gray-300">0</span></p>
+                        <p>🌱 <span data-lang-key="sapling"></span>: <span id="sapling-count" class="font-bold text-lime-400">0</span></p>
+                        <p>🌳 <span data-lang-key="mangrove"></span>: <span id="mangrove-count" class="font-bold text-green-600">0</span></p>
+                        <p>🌴 <span data-lang-key="nipa_palm"></span>: <span id="nipa-palm-count" class="font-bold text-teal-400">0</span></p>
+                        <p class="text-red-400">🔥 <span data-lang-key="pollution"></span>: <span id="pollution-display" class="font-bold">0%</span></p>
                     </div>
 
                     <!-- Tab Điều khiển -->
                     <div id="controls-tab" class="tab-content">
-                        <div class="grid grid-cols-2 gap-2">
-                            <button id="addPlankton" class="btn bg-green-500 hover:bg-green-600" data-lang-key="add_algae"></button>
-                            <button id="addCrab" class="btn bg-orange-500 hover:bg-orange-600" data-lang-key="add_crab"></button>
-                            <button id="addFish" class="btn bg-blue-500 hover:bg-blue-600" data-lang-key="add_fish"></button>
-                            <button id="addMonkey" class="btn bg-yellow-600 hover:bg-yellow-700" data-lang-key="add_monkey"></button>
-                            <button id="addBird" class="btn bg-gray-400 hover:bg-gray-500" data-lang-key="add_bird"></button>
-                            <button id="resetSim" class="btn bg-red-500 hover:bg-red-600" data-lang-key="reset_sim"></button>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button id="addPlankton" class="btn bg-green-500 hover:bg-green-600"><i class="fas fa-leaf"></i> <span data-lang-key="add_algae"></span></button>
+                            <button id="addCrab" class="btn bg-orange-500 hover:bg-orange-600"><i class="fas fa-kiwi-bird"></i> <span data-lang-key="add_crab"></span></button>
+                            <button id="addFish" class="btn bg-blue-500 hover:bg-blue-600"><i class="fas fa-fish"></i> <span data-lang-key="add_fish"></span></button>
+                            <button id="addMonkey" class="btn bg-yellow-600 hover:bg-yellow-700"><i class="fas fa-spider"></i> <span data-lang-key="add_monkey"></span></button>
+                            <button id="addBird" class="btn bg-gray-400 hover:bg-gray-500"><i class="fas fa-dove"></i> <span data-lang-key="add_bird"></span></button>
+                            <button id="resetSim" class="btn bg-red-500 hover:bg-red-600"><i class="fas fa-redo"></i> <span data-lang-key="reset_sim"></span></button>
                         </div>
                     </div>
 
                     <!-- Tab Dự án -->
-                    <div id="projects-tab" class="tab-content space-y-3">
-                        <h3 class="font-bold text-lg" data-lang-key="env_projects"></h3>
-                        <button id="plant-sapling" class="w-full btn bg-green-600 hover:bg-green-700" data-lang-key="plant_sapling_btn"></button>
-                        <button id="reforestation-project" class="w-full btn bg-green-700 hover:bg-green-800" data-lang-key="reforestation_btn"></button>
-                        <button id="clean-pollution" class="w-full btn bg-indigo-500 hover:bg-indigo-600" data-lang-key="clean_pollution_btn"></button>
-                        <h3 class="font-bold text-lg mt-4" data-lang-key="special_events"></h3>
-                        <button id="csr-investment" class="w-full btn bg-purple-600 hover:bg-purple-700" data-lang-key="csr_btn"></button>
+                    <div id="projects-tab" class="tab-content space-y-4">
+                        <h3 class="font-bold text-xl" data-lang-key="env_projects"></h3>
+                        <button id="plant-sapling" class="w-full btn bg-green-600 hover:bg-green-700"><i class="fas fa-seedling"></i> <span data-lang-key="plant_sapling_btn"></span></button>
+                        <button id="reforestation-project" class="w-full btn bg-green-700 hover:bg-green-800"><i class="fas fa-tree"></i> <span data-lang-key="reforestation_btn"></span></button>
+                        <button id="clean-pollution" class="w-full btn bg-indigo-500 hover:bg-indigo-600"><i class="fas fa-broom"></i> <span data-lang-key="clean_pollution_btn"></span></button>
+                        <h3 class="font-bold text-xl mt-4" data-lang-key="special_events"></h3>
+                        <button id="csr-investment" class="w-full btn bg-purple-600 hover:bg-purple-700"><i class="fas fa-hand-holding-usd"></i> <span data-lang-key="csr_btn"></span></button>
                     </div>
-                    
+
                     <!-- Tab Kinh tế -->
-                    <div id="economy-tab" class="tab-content space-y-3">
+                    <div id="economy-tab" class="tab-content space-y-4">
                         <div class="text-lg">💰 <span data-lang-key="money"></span>: <span id="money-display" class="font-bold text-yellow-300">$1000</span></div>
                         <div class="text-lg">🌍 <span data-lang-key="carbon_credits"></span>: <span id="carbon-credits-display" class="font-bold text-cyan-300">0.00</span></div>
                         <div class="text-lg">💹 <span data-lang-key="carbon_price"></span>: <span id="carbon-price-display" class="font-bold text-green-400">$0.00</span> <i id="api-status" class="fas fa-sync fa-spin text-xs"></i></div>
-                        <div class="w-full h-24 bg-gray-800/50 p-1 rounded-md"><canvas id="priceHistoryChart"></canvas></div>
+                        <div class="chart-container"><canvas id="priceHistoryChart"></canvas></div>
                         <div class="text-xs text-gray-400 text-center" data-lang-key="price_source"></div>
-                        <button id="sell-carbon" class="w-full btn bg-blue-600 hover:bg-blue-700" data-lang-key="sell_carbon_btn"></button>
+                        <button id="sell-carbon" class="w-full btn bg-blue-600 hover:bg-blue-700"><i class="fas fa-coins"></i> <span data-lang-key="sell_carbon_btn"></span></button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- <audio id="plantSound" src="https://cdn.pixabay.com/audio/2023/03/22/audio_7a73a6b5f6.mp3"></audio>
+    <audio id="cleanSound" src="https://cdn.pixabay.com/audio/2023/03/22/audio_7b6a6b5f6.mp3"></audio>
+    <audio id="csrSound" src="https://cdn.pixabay.com/audio/2023/03/22/audio_7c7a6b5f6.mp3"></audio> -->
 
     <script>
         // === Thiết lập DOM và Canvas ===
@@ -146,7 +305,7 @@
         // === Trạng thái mô phỏng ===
         let plankton = [], crabs = [], monkeys = [], mangroves = [], fish = [], birds = [], saplings = [], nipaPalms = [];
         let allShelterTrees = [];
-        let gameTime = 0, pollutionLevel = 0, lastApiCall = 0, lastCSRCall = -5000;
+        let gameTime = 0, pollutionLevel = 0, lastApiCall = 0, lastCSRCall = -5000, csrCount = 0;
         let carbonCredits = 0, carbonPrice = 20.00;
         let money = 1000;
         let priceHistory = [];
@@ -155,7 +314,7 @@
 
         const PLANT_SAPLING_COST = 350, REFORESTATION_COST = 1500, CLEAN_COST = 2000, CSR_INVESTMENT = 5000;
         const SHELTER_DISTANCE = 40;
-        const MAX_PLANTS = 150;
+        const MAX_PLANTS = 100, MAX_PLANKTON = 300, MAX_CRABS = 50, MAX_FISH = 50, MAX_MONKEYS = 20, MAX_BIRDS = 30;
 
         // === Dữ liệu ngôn ngữ ===
         const langData = {
@@ -170,13 +329,22 @@
                 economy_tab_title: "Kinh tế",
                 guide_welcome: "Chào mừng bạn!",
                 guide_reproduction_title: "Sinh sản:",
-                guide_reproduction_desc: "Các loài vật sẽ tự động sinh sản khi chúng ăn đủ năng lượng.",
+                guide_reproduction_desc: "Các loài sinh sản tự nhiên khi có đủ năng lượng từ thức ăn.",
                 guide_migration_title: "Di cư:",
-                guide_migration_desc: "Hệ sinh thái trong lành sẽ thu hút các loài mới di cư đến.",
+                guide_migration_desc: "Hệ sinh thái trong lành thu hút cá và chim di cư đến.",
                 guide_csr_title: "Đầu tư CSR:",
-                guide_csr_desc: "Khi hệ sinh thái đủ mạnh, bạn có thể 'Kêu gọi đầu tư' để nhận một khoản tiền lớn.",
+                guide_csr_desc: "Khi hệ sinh thái mạnh (ít ô nhiễm, nhiều cây), kêu gọi đầu tư để nhận tài trợ.",
                 guide_forest_title: "Phát triển Rừng:",
-                guide_forest_desc: "Bắt đầu các dự án trồng cây để tăng độ che phủ và tín chỉ carbon.",
+                guide_forest_desc: "Trồng cây để tăng tín chỉ carbon và cung cấp nơi trú ẩn cho động vật.",
+                guide_management_title: "Mẹo Quản lý Hệ sinh thái",
+                guide_pollution_title: "Kiểm soát ô nhiễm:",
+                guide_pollution_desc: "Dùng 'Dọn Ô nhiễm' ($2000) để giảm ô nhiễm, giúp tảo sinh sản tự nhiên và thu hút động vật di cư.",
+                guide_forest_growth_title: "Tăng trưởng rừng:",
+                guide_forest_growth_desc: "Trồng cây non ($350) hoặc tái trồng rừng ($1500) để tạo nơi trú ẩn và tăng tín chỉ carbon, hỗ trợ động vật sống lâu hơn.",
+                guide_reproduction_management_title: "Khuyến khích sinh sản:",
+                guide_reproduction_management_desc: "Giữ ô nhiễm dưới 20% và duy trì số lượng tảo (>50) để cua và cá sinh sản tự nhiên. Trồng cây để khỉ và chim có nơi trú ẩn.",
+                guide_finance_title: "Quản lý tài chính:",
+                guide_finance_desc: "Bán tín chỉ carbon khi giá cao và đầu tư vào dự án môi trường để phát triển hệ sinh thái bền vững.",
                 foodchain_title: "Chuỗi Thức ăn",
                 producer: "Bậc 1 (Sản xuất)",
                 algae: "Tảo",
@@ -203,7 +371,7 @@
                 env_projects: "Dự án Môi trường",
                 plant_sapling_btn: "Trồng 1 Cây Non ($350)",
                 reforestation_btn: "Dự án Tái trồng rừng ($1500)",
-                clean_pollution_btn: "Dự án Dọn Ô nhiễm ($2000)",
+                clean_pollution_btn: "Dọn Ô nhiễm ($2000)",
                 special_events: "Sự kiện đặc biệt",
                 csr_btn: "Kêu gọi đầu tư CSR",
                 money: "Tiền",
@@ -212,7 +380,9 @@
                 price_source: "Nguồn: CoinGecko (Giá ETH/100)",
                 sell_carbon_btn: "Bán Tín chỉ Carbon",
                 migration_fish: "Một đàn cá đã di cư đến hệ sinh thái!",
-                migration_bird: "Một đàn chim đã bay đến trú ngụ!"
+                migration_bird: "Một đàn chim đã bay đến trú ngụ!",
+                plant_sapling_success: "Đã trồng 1 cây non thành công!",
+                reforestation_success: "Dự án tái trồng rừng đã khởi động, 5 cây non được trồng!"
             },
             en: {
                 title: "Can Gio Ecosystem & Carbon Market",
@@ -225,13 +395,22 @@
                 economy_tab_title: "Economy",
                 guide_welcome: "Welcome!",
                 guide_reproduction_title: "Reproduction:",
-                guide_reproduction_desc: "Animals will automatically reproduce when they have enough energy.",
+                guide_reproduction_desc: "Species reproduce naturally when they have enough energy from food.",
                 guide_migration_title: "Migration:",
-                guide_migration_desc: "A healthy ecosystem will attract new species to migrate.",
+                guide_migration_desc: "A healthy ecosystem attracts migrating fish and birds.",
                 guide_csr_title: "CSR Investment:",
-                guide_csr_desc: "When the ecosystem is strong, you can 'Call for Investment' to get a large sum of money.",
+                guide_csr_desc: "When the ecosystem is strong (low pollution, many trees), call for investment to gain funding.",
                 guide_forest_title: "Forest Development:",
-                guide_forest_desc: "Start planting projects to increase cover and carbon credits.",
+                guide_forest_desc: "Plant trees to increase carbon credits and provide shelter for animals.",
+                guide_management_title: "Ecosystem Management Tips",
+                guide_pollution_title: "Control Pollution:",
+                guide_pollution_desc: "Use 'Pollution Cleanup' ($2000) to reduce pollution, encouraging algae growth and attracting migrating species.",
+                guide_forest_growth_title: "Forest Growth:",
+                guide_forest_growth_desc: "Plant saplings ($350) or start reforestation ($1500) to create shelters and increase carbon credits, helping animals survive longer.",
+                guide_reproduction_management_title: "Encourage Reproduction:",
+                guide_reproduction_management_desc: "Keep pollution below 20% and maintain algae (>50) for crabs and fish to reproduce naturally. Plant trees for monkeys and birds to have shelters.",
+                guide_finance_title: "Financial Management:",
+                guide_finance_desc: "Sell carbon credits when prices are high and invest in environmental projects for sustainable ecosystem growth.",
                 foodchain_title: "Food Chain",
                 producer: "Tier 1 (Producers)",
                 algae: "Algae",
@@ -267,7 +446,9 @@
                 price_source: "Source: CoinGecko (ETH Price/100)",
                 sell_carbon_btn: "Sell Carbon Credits",
                 migration_fish: "A school of fish has migrated to the ecosystem!",
-                migration_bird: "A flock of birds has arrived to shelter!"
+                migration_bird: "A flock of birds has arrived to shelter!",
+                plant_sapling_success: "Successfully planted 1 sapling!",
+                reforestation_success: "Reforestation project started, 5 saplings planted!"
             },
             ja: {
                 title: "カンザー生態系と炭素市場",
@@ -280,13 +461,22 @@
                 economy_tab_title: "経済",
                 guide_welcome: "ようこそ！",
                 guide_reproduction_title: "繁殖:",
-                guide_reproduction_desc: "動物は十分なエネルギーがあると自動的に繁殖します。",
+                guide_reproduction_desc: "種は食べ物から十分なエネルギーがあると自然に繁殖します。",
                 guide_migration_title: "移住:",
-                guide_migration_desc: "健全な生態系は新しい種を引き寄せます。",
+                guide_migration_desc: "健全な生態系は移住する魚や鳥を引き寄せます。",
                 guide_csr_title: "CSR投資:",
-                guide_csr_desc: "生態系が強くなると、「投資を呼びかける」ことで多額の資金を得ることができます。",
+                guide_csr_desc: "生態系が強くなると（汚染が少なく、木が多い）、投資を呼びかけて資金を得られます。",
                 guide_forest_title: "森林開発:",
-                guide_forest_desc: "植林プロジェクトを開始して、被覆率と炭素クレジットを増やします。",
+                guide_forest_desc: "木を植えて炭素クレジットを増やし、動物の避難場所を提供します。",
+                guide_management_title: "生態系管理のヒント",
+                guide_pollution_title: "汚染管理:",
+                guide_pollution_desc: "「汚染除去」（$2000）を使用して汚染を減らし、藻類の成長を促進し、移住種を引き寄せます。",
+                guide_forest_growth_title: "森林の成長:",
+                guide_forest_growth_desc: "苗木を植える（$350）または再植林（$1500）を開始して、避難場所を作り、炭素クレジットを増やし、動物の生存を助けます。",
+                guide_reproduction_management_title: "繁殖の促進:",
+                guide_reproduction_management_desc: "汚染を20%未満に保ち、藻類を50以上維持して、カニと魚が自然に繁殖できるようにします。木を植えてサルや鳥に避難場所を提供します。",
+                guide_finance_title: "財務管理:",
+                guide_finance_desc: "価格が高いときに炭素クレジットを売り、環境プロジェクトに投資して持続可能な生態系成長を実現します。",
                 foodchain_title: "食物連鎖",
                 producer: "生産者",
                 algae: "藻類",
@@ -322,7 +512,9 @@
                 price_source: "出典: CoinGecko (ETH価格/100)",
                 sell_carbon_btn: "炭素クレジットを売る",
                 migration_fish: "魚の群れが生態系にやってきました！",
-                migration_bird: "鳥の群れが避難するためにやってきました！"
+                migration_bird: "鳥の群れが避難するためにやってきました！",
+                plant_sapling_success: "苗木を1本植えました！",
+                reforestation_success: "再植林プロジェクトが開始され、5本の苗木が植えられました！"
             }
         };
 
@@ -331,76 +523,321 @@
             constructor(x, y, size, emoji) { this.x = x; this.y = y; this.size = size; this.emoji = emoji; this.energy = 100; this.age = 0; }
             draw(ctx) { ctx.font = `${this.size}px Arial`; ctx.fillText(this.emoji, this.x, this.y); }
             move() {
-                this.x += Math.random() * 4 - 2; this.y += Math.random() * 4 - 2;
+                this.x += Math.random() * 3 - 1.5; this.y += Math.random() * 3 - 1.5;
                 if (this.x < 0) this.x = ecoCanvas.width; if (this.x > ecoCanvas.width) this.x = 0;
                 if (this.y < 0) this.y = ecoCanvas.height; if (this.y > ecoCanvas.height) this.y = 0;
             }
+            moveTowards(targets) {
+                if (targets.length === 0) return this.move();
+                const nearest = targets.reduce((closest, t) => {
+                    const dist = Math.hypot(this.x - t.x, this.y - t.y);
+                    return dist < Math.hypot(this.x - closest.x, this.y - closest.y) ? t : closest;
+                }, targets[0]);
+                const dx = nearest.x - this.x, dy = nearest.y - this.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist > 5) {
+                    this.x += (dx / dist) * 3; this.y += (dy / dist) * 3;
+                }
+            }
         }
-        class Plankton extends Entity { constructor(x, y) { super(x, y, 15, '🌿'); this.energy = 25; } move() {} }
+        class Plankton extends Entity { 
+            constructor(x, y) { 
+                super(x, y, 15, '🌿'); 
+                this.energy = 20; 
+                this.age = 0; 
+                this.maxAge = 1200; // Tảo chết sau 1200 khung hình (~20 giây ở 60 FPS)
+            } 
+            move() {} 
+            update() {
+                this.age++;
+                return this.age < this.maxAge; // Trả về false nếu tảo quá tuổi, để xóa
+            }
+        }
         class Mangrove extends Entity { constructor(x, y) { super(x, y, 30, '🌳'); } move() {} }
         class NipaPalm extends Entity { constructor(x, y) { super(x, y, 35, '🌴'); } move() {} }
         class Sapling extends Entity { 
             constructor(x, y) { 
                 super(x, y, 15, '🌱'); 
-                this.maturityAge = 1000 + Math.random() * 500;
+                this.maturityAge = 800 + Math.random() * 400;
                 this.growsInto = Math.random() < 0.7 ? 'mangrove' : 'nipaPalm';
             } 
             move() {} 
         }
-        class Animal extends Entity { constructor(x, y, size, emoji, maxAge) { super(x, y, size, emoji); this.maxAge = maxAge; } }
+        class Animal extends Entity { 
+            constructor(x, y, size, emoji, maxAge) { super(x, y, size, emoji); this.maxAge = maxAge; } 
+        }
         class Crab extends Animal {
-            constructor(x, y) { super(x, y, 20, '🦀', 600); }
-            update() { this.move(); this.energy -= 0.2; this.age++; for (let i = plankton.length - 1; i >= 0; i--) { if (Math.hypot(this.x - plankton[i].x, this.y - plankton[i].y) < this.size) { this.energy += plankton[i].energy; plankton.splice(i, 1); break; } } if (this.energy > 150) { this.energy -= 100; crabs.push(new Crab(this.x, this.y)); } }
+            constructor(x, y) { super(x, y, 20, '🦀', 1800); }
+            update() { 
+                this.moveTowards(plankton); 
+                this.energy -= 0.05; 
+                this.age++; 
+                if (allShelterTrees.some(tree => Math.hypot(this.x - tree.x, this.y - tree.y) < SHELTER_DISTANCE)) {
+                    this.energy += 0.05;
+                }
+                for (let i = plankton.length - 1; i >= 0; i--) { 
+                    if (Math.hypot(this.x - plankton[i].x, this.y - plankton[i].y) < this.size * 1.5) { 
+                        this.energy += plankton[i].energy * 1.5; 
+                        plankton.splice(i, 1); 
+                        break; 
+                    } 
+                } 
+                if (this.energy > 100 && crabs.length < MAX_CRABS) { 
+                    this.energy -= 80; 
+                    crabs.push(new Crab(this.x, this.y)); 
+                } 
+            }
         }
         class Fish extends Animal {
-            constructor(x, y) { super(x, y, 18, '🐟', 500); }
-            update() { this.move(); this.energy -= 0.25; this.age++; for (let i = plankton.length - 1; i >= 0; i--) { if (Math.hypot(this.x - plankton[i].x, this.y - plankton[i].y) < this.size) { this.energy += plankton[i].energy; plankton.splice(i, 1); break; } } if (this.energy > 120) { this.energy -= 80; fish.push(new Fish(this.x, this.y)); } }
+            constructor(x, y) { super(x, y, 18, '🐟', 1500); }
+            update() { 
+                this.moveTowards(plankton); 
+                this.energy -= 0.07; 
+                this.age++; 
+                if (allShelterTrees.some(tree => Math.hypot(this.x - tree.x, this.y - tree.y) < SHELTER_DISTANCE)) {
+                    this.energy += 0.05;
+                }
+                for (let i = plankton.length - 1; i >= 0; i--) { 
+                    if (Math.hypot(this.x - plankton[i].x, this.y - plankton[i].y) < this.size * 1.5) { 
+                        this.energy += plankton[i].energy * 1.5; 
+                        plankton.splice(i, 1); 
+                        break; 
+                    } 
+                } 
+                if (this.energy > 80 && fish.length < MAX_FISH) { 
+                    this.energy -= 60; 
+                    fish.push(new Fish(this.x, this.y)); 
+                } 
+            }
         }
         class Monkey extends Animal {
-            constructor(x, y) { super(x, y, 25, '🐒', 1200); }
-            update() { this.move(); this.energy -= 0.4; this.age++; 
-                for (let i = crabs.length - 1; i >= 0; i--) { const c = crabs[i]; if (!allShelterTrees.some(tree => Math.hypot(c.x - tree.x, c.y - tree.y) < SHELTER_DISTANCE)) { if (Math.hypot(this.x - c.x, this.y - c.y) < this.size) { this.energy += 60; crabs.splice(i, 1); return; } } } 
-                for (let i = fish.length - 1; i >= 0; i--) { if (Math.hypot(this.x - fish[i].x, this.y - fish[i].y) < this.size) { this.energy += 40; fish.splice(i, 1); return; } } 
-                if (this.energy > 200) { this.energy -= 150; monkeys.push(new Monkey(this.x, this.y)); } 
+            constructor(x, y) { super(x, y, 25, '🐒', 3600); }
+            update() { 
+                this.moveTowards([...crabs, ...fish]); 
+                this.energy -= 0.1; 
+                this.age++; 
+                if (allShelterTrees.some(tree => Math.hypot(this.x - tree.x, this.y - tree.y) < SHELTER_DISTANCE)) {
+                    this.energy += 0.05;
+                }
+                for (let i = crabs.length - 1; i >= 0; i--) { 
+                    const c = crabs[i]; 
+                    if (!allShelterTrees.some(tree => Math.hypot(c.x - tree.x, c.y - tree.y) < SHELTER_DISTANCE)) { 
+                        if (Math.hypot(this.x - c.x, this.y - c.y) < this.size * 1.5) { 
+                            this.energy += 50; 
+                            crabs.splice(i, 1); 
+                            return; 
+                        } 
+                    } 
+                } 
+                for (let i = fish.length - 1; i >= 0; i--) { 
+                    if (Math.hypot(this.x - fish[i].x, this.y - fish[i].y) < this.size * 1.5) { 
+                        this.energy += 30; 
+                        fish.splice(i, 1); 
+                        return; 
+                    } 
+                } 
+                if (this.energy > 120 && monkeys.length < MAX_MONKEYS) { 
+                    this.energy -= 100; 
+                    monkeys.push(new Monkey(this.x, this.y)); 
+                } 
             }
         }
         class Bird extends Animal {
-            constructor(x, y) { super(x, y, 22, '🐦', 1000); }
-            update() { this.move(); this.energy -= 0.3; this.age++; for (let i = fish.length - 1; i >= 0; i--) { if (Math.hypot(this.x - fish[i].x, this.y - fish[i].y) < this.size) { this.energy += 40; fish.splice(i, 1); break; } } if (this.energy > 180) { this.energy -= 120; birds.push(new Bird(this.x, this.y)); } }
+            constructor(x, y) { super(x, y, 22, '🐦', 3000); }
+            update() { 
+                this.moveTowards(fish); 
+                this.energy -= 0.08; 
+                this.age++; 
+                if (allShelterTrees.some(tree => Math.hypot(this.x - tree.x, this.y - tree.y) < SHELTER_DISTANCE)) {
+                    this.energy += 0.05;
+                }
+                for (let i = fish.length - 1; i >= 0; i--) { 
+                    if (Math.hypot(this.x - fish[i].x, this.y - fish[i].y) < this.size * 1.5) { 
+                        this.energy += 30; 
+                        fish.splice(i, 1); 
+                        break; 
+                    } 
+                } 
+                if (this.energy > 100 && birds.length < MAX_BIRDS) { 
+                    this.energy -= 90; 
+                    birds.push(new Bird(this.x, this.y)); 
+                } 
+            }
         }
 
         // === API & Kinh tế & Sự kiện ===
-        async function fetchCarbonPrice() { getEl('api-status').style.display = 'inline-block'; try { const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd'); if (!response.ok) throw new Error('API request failed'); const data = await response.json(); carbonPrice = data.ethereum.usd / 100; priceHistory.push({x: gameTime, y: carbonPrice}); if (priceHistory.length > 50) priceHistory.shift(); drawPriceChart(); } catch (error) { console.error("API Error:", error); carbonPrice += (Math.random() - 0.5) * 0.1; carbonPrice = Math.max(5, Math.min(100, carbonPrice)); } finally { getEl('api-status').style.display = 'none'; } }
-        getEl('csr-investment').addEventListener('click', () => { if (money < 100000) money += CSR_INVESTMENT; lastCSRCall = gameTime; });
+        async function fetchCarbonPrice() { 
+            getEl('api-status').style.display = 'inline-block'; 
+            try {
+                let response;
+                if (typeof AbortController !== 'undefined') {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                } else {
+                    // Dự phòng cho trình duyệt không hỗ trợ AbortController
+                    response = await new Promise((resolve, reject) => {
+                        const timeoutId = setTimeout(() => reject(new Error('Request timed out')), 5000);
+                        fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd')
+                            .then(res => { clearTimeout(timeoutId); resolve(res); })
+                            .catch(err => { clearTimeout(timeoutId); reject(err); });
+                    });
+                }
+                if (!response.ok) throw new Error('API request failed');
+                const data = await response.json();
+                carbonPrice = data.ethereum.usd / 100;
+                priceHistory.push({x: gameTime, y: carbonPrice});
+                if (priceHistory.length > 50) priceHistory.shift();
+                drawPriceChart();
+            } catch (error) {
+                console.error("API Error:", error);
+                carbonPrice += (Math.random() - 0.5) * 0.05;
+                carbonPrice = Math.max(5, Math.min(100, carbonPrice));
+                priceHistory.push({x: gameTime, y: carbonPrice});
+                if (priceHistory.length > 50) priceHistory.shift();
+                drawPriceChart();
+            } finally {
+                getEl('api-status').style.display = 'none';
+            }
+        }
+        getEl('csr-investment').addEventListener('click', () => { 
+            if (csrCount < 3 && money < 100000) { 
+                money += CSR_INVESTMENT; 
+                lastCSRCall = gameTime; 
+                csrCount++; 
+                getEl('csrSound').play(); 
+                showNotification('csr_btn'); 
+            } 
+        });
 
         // === Điều khiển & UI ===
-        function addOrganisms(type, count) { for (let i = 0; i < count; i++) { const x = Math.random() * ecoCanvas.width; const y = Math.random() * ecoCanvas.height; if (type === 'plankton') plankton.push(new Plankton(x, y)); else if (type === 'crab') crabs.push(new Crab(x, y)); else if (type === 'monkey') monkeys.push(new Monkey(x, y)); else if (type === 'mangrove') mangroves.push(new Mangrove(x, y)); else if (type === 'nipaPalm') nipaPalms.push(new NipaPalm(x, y)); else if (type === 'fish') fish.push(new Fish(x, y)); else if (type === 'bird') birds.push(new Bird(x, y)); else if (type === 'sapling') saplings.push(new Sapling(x, y)); } }
-        getEl('addPlankton').addEventListener('click', () => addOrganisms('plankton', 10)); getEl('addCrab').addEventListener('click', () => addOrganisms('crab', 2)); getEl('addFish').addEventListener('click', () => addOrganisms('fish', 5)); getEl('addMonkey').addEventListener('click', () => addOrganisms('monkey', 1)); getEl('addBird').addEventListener('click', () => addOrganisms('bird', 2)); getEl('resetSim').addEventListener('click', resetSimulation);
+        function addOrganisms(type, count) { 
+            const totalPlants = mangroves.length + nipaPalms.length + saplings.length;
+            for (let i = 0; i < count; i++) { 
+                const x = Math.random() * ecoCanvas.width; 
+                const y = Math.random() * ecoCanvas.height; 
+                if (type === 'plankton' && plankton.length < MAX_PLANKTON) plankton.push(new Plankton(x, y)); 
+                else if (type === 'crab' && crabs.length < MAX_CRABS) crabs.push(new Crab(x, y)); 
+                else if (type === 'monkey' && monkeys.length < MAX_MONKEYS) monkeys.push(new Monkey(x, y)); 
+                else if (type === 'mangrove' && totalPlants < MAX_PLANTS) mangroves.push(new Mangrove(x, y)); 
+                else if (type === 'nipaPalm' && totalPlants < MAX_PLANTS) nipaPalms.push(new NipaPalm(x, y)); 
+                else if (type === 'fish' && fish.length < MAX_FISH) fish.push(new Fish(x, y)); 
+                else if (type === 'bird' && birds.length < MAX_BIRDS) birds.push(new Bird(x, y)); 
+                else if (type === 'sapling' && totalPlants < MAX_PLANTS) saplings.push(new Sapling(x, y)); 
+            } 
+        }
+        getEl('addPlankton').addEventListener('click', () => addOrganisms('plankton', 10)); 
+        getEl('addCrab').addEventListener('click', () => addOrganisms('crab', 2)); 
+        getEl('addFish').addEventListener('click', () => addOrganisms('fish', 5)); 
+        getEl('addMonkey').addEventListener('click', () => addOrganisms('monkey', 1)); 
+        getEl('addBird').addEventListener('click', () => addOrganisms('bird', 2)); 
+        getEl('resetSim').addEventListener('click', resetSimulation);
         getEl('sell-carbon').addEventListener('click', () => { money += carbonCredits * carbonPrice; carbonCredits = 0; });
-        getEl('plant-sapling').addEventListener('click', () => { if (money >= PLANT_SAPLING_COST) { money -= PLANT_SAPLING_COST; addOrganisms('sapling', 1); } });
-        getEl('reforestation-project').addEventListener('click', () => { if (money >= REFORESTATION_COST) { money -= REFORESTATION_COST; addOrganisms('sapling', 5); } });
-        getEl('clean-pollution').addEventListener('click', () => { if (money >= CLEAN_COST) { money -= CLEAN_COST; pollutionLevel = Math.max(0, pollutionLevel - 0.5); } });
+        getEl('plant-sapling').addEventListener('click', () => { 
+            if (money >= PLANT_SAPLING_COST && mangroves.length + nipaPalms.length + saplings.length < MAX_PLANTS) { 
+                money -= PLANT_SAPLING_COST; 
+                addOrganisms('sapling', 1); 
+                getEl('plantSound').play(); 
+                showNotification('plant_sapling_success'); 
+            } 
+        });
+        getEl('reforestation-project').addEventListener('click', () => { 
+            if (money >= REFORESTATION_COST && mangroves.length + nipaPalms.length + saplings.length <= MAX_PLANTS - 5) { 
+                money -= REFORESTATION_COST; 
+                addOrganisms('sapling', 5); 
+                getEl('plantSound').play(); 
+                showNotification('reforestation_success'); 
+            } 
+        });
+        getEl('clean-pollution').addEventListener('click', () => { 
+            if (money >= CLEAN_COST) { 
+                money -= CLEAN_COST; 
+                pollutionLevel = Math.max(0, pollutionLevel - 0.2); 
+                getEl('cleanSound').play(); 
+            } 
+        });
         
-        const tabs = document.querySelectorAll('.tab-btn'); const tabContents = document.querySelectorAll('.tab-content');
-        tabs.forEach(tab => tab.addEventListener('click', () => { tabs.forEach(item => item.classList.remove('active')); tab.classList.add('active'); const target = getEl(tab.dataset.tab + '-tab'); tabContents.forEach(content => content.classList.remove('active')); target.classList.add('active'); }));
+        const tabs = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        tabs.forEach(tab => tab.addEventListener('click', () => { 
+            tabs.forEach(item => item.classList.remove('active')); 
+            tab.classList.add('active'); 
+            const target = getEl(tab.dataset.tab + '-tab'); 
+            tabContents.forEach(content => content.classList.remove('active')); 
+            target.classList.add('active'); 
+        }));
 
         function updateUI() {
-            getEl('plankton-count').textContent = plankton.length; getEl('crab-count').textContent = crabs.length; getEl('fish-count').textContent = fish.length; getEl('monkey-count').textContent = monkeys.length; getEl('bird-count').textContent = birds.length; getEl('sapling-count').textContent = saplings.length; getEl('mangrove-count').textContent = mangroves.length; getEl('nipa-palm-count').textContent = nipaPalms.length;
-            getEl('money-display').textContent = `$${money.toFixed(0)}`; getEl('carbon-credits-display').textContent = carbonCredits.toFixed(2); getEl('carbon-price-display').textContent = `$${carbonPrice.toFixed(2)}`; getEl('pollution-display').textContent = `${(pollutionLevel * 100).toFixed(0)}%`;
+            getEl('plankton-count').textContent = plankton.length; 
+            getEl('crab-count').textContent = crabs.length; 
+            getEl('fish-count').textContent = fish.length; 
+            getEl('monkey-count').textContent = monkeys.length; 
+            getEl('bird-count').textContent = birds.length; 
+            getEl('sapling-count').textContent = saplings.length; 
+            getEl('mangrove-count').textContent = mangroves.length; 
+            getEl('nipa-palm-count').textContent = nipaPalms.length;
+            getEl('money-display').textContent = `$${money.toFixed(0)}`; 
+            getEl('carbon-credits-display').textContent = carbonCredits.toFixed(2); 
+            getEl('carbon-price-display').textContent = `$${carbonPrice.toFixed(2)}`; 
+            getEl('pollution-display').textContent = `${(pollutionLevel * 100).toFixed(0)}%`;
             pollutionOverlay.style.backgroundColor = `rgba(100, 70, 20, ${pollutionLevel * 0.5})`;
             
-            getEl('plant-sapling').disabled = money < PLANT_SAPLING_COST;
-            getEl('reforestation-project').disabled = money < REFORESTATION_COST;
+            getEl('plant-sapling').disabled = money < PLANT_SAPLING_COST || mangroves.length + nipaPalms.length + saplings.length >= MAX_PLANTS;
+            getEl('reforestation-project').disabled = money < REFORESTATION_COST || mangroves.length + nipaPalms.length + saplings.length > MAX_PLANTS - 5;
             getEl('clean-pollution').disabled = money < CLEAN_COST || pollutionLevel === 0;
             getEl('sell-carbon').disabled = carbonCredits < 1;
             const csrButton = getEl('csr-investment');
-            const canCallCSR = (mangroves.length + nipaPalms.length) >= 10 && pollutionLevel < 0.1 && (gameTime - lastCSRCall) > 5000;
+            const canCallCSR = (mangroves.length + nipaPalms.length) >= 10 && pollutionLevel < 0.1 && (gameTime - lastCSRCall) > 5000 && csrCount < 3;
             csrButton.disabled = !canCallCSR;
         }
 
         // === Biểu đồ ===
-        function initPriceChart() { if (priceHistoryChart) { priceHistoryChart.destroy(); } priceHistoryChart = new Chart(priceHistoryCtx, { type: 'line', data: { datasets: [{ data: priceHistory, borderColor: '#22C55E', borderWidth: 2, tension: 0.4, pointRadius: 0 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { display: false }, y: { display: false } }, plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 500 } } }); }
-        function drawPriceChart() { if(priceHistoryChart) { priceHistoryChart.data.datasets[0].data = priceHistory; priceHistoryChart.update(); } }
+        function initPriceChart() { 
+            if (priceHistoryChart) { priceHistoryChart.destroy(); } 
+            priceHistoryChart = new Chart(priceHistoryCtx, { 
+                type: 'line', 
+                data: { 
+                    datasets: [{ 
+                        data: priceHistory, 
+                        borderColor: '#22C55E', 
+                        backgroundColor: 'rgba(34, 197, 94, 0.2)', 
+                        borderWidth: 2, 
+                        tension: 0.4, 
+                        pointRadius: 0, 
+                        fill: true 
+                    }] 
+                }, 
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    scales: { 
+                        x: { display: false }, 
+                        y: { 
+                            beginAtZero: false, 
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }, 
+                            ticks: { color: '#ffffff', font: { size: 10 } } 
+                        } 
+                    }, 
+                    plugins: { 
+                        legend: { display: false }, 
+                        tooltip: { 
+                            enabled: true, 
+                            callbacks: { 
+                                label: (context) => `$${context.parsed.y.toFixed(2)}` 
+                            } 
+                        } 
+                    }, 
+                    animation: { duration: 500 } 
+                } 
+            }); 
+        }
+        function drawPriceChart() { 
+            if (priceHistoryChart) { 
+                priceHistoryChart.data.datasets[0].data = priceHistory; 
+                priceHistoryChart.update(); 
+            } 
+        }
         
         // === Ngôn ngữ & Thông báo ===
         function updateLanguage(lang) {
@@ -425,48 +862,68 @@
             gameTime++;
             if (gameTime % 1500 === 0) { fetchCarbonPrice(); }
             const dayNightFactor = (Math.sin(gameTime / 500) + 1) / 2;
-            ecoCanvas.style.backgroundColor = `rgb(${30 + 41 * dayNightFactor}, ${41 + 44 * dayNightFactor}, ${59 + 46 * dayNightFactor})`;
-            if (dayNightFactor > 0.5 && Math.random() < 0.3 * (1 - pollutionLevel) && plankton.length < 300) addOrganisms('plankton', 1);
-            if (Math.random() < 0.0005) { pollutionLevel = Math.min(1, pollutionLevel + 0.2); }
-            
+            ecoCanvas.style.backgroundColor = `rgb(${30 + 41 * dayNightFactor}, ${41 + 0 * dayNightFactor}, ${59 + 46 * dayNightFactor})`;
+            if (dayNightFactor > 0.5 && Math.random() < 0.3 * (1 - pollutionLevel * 0.5) && plankton.length < MAX_PLANKTON) addOrganisms('plankton', 3);
+            if (Math.random() < 0.0001) { pollutionLevel = Math.min(1, pollutionLevel + 0.1); }
+
             // Sự kiện di cư tự nhiên
             if (gameTime % 2000 === 1 && pollutionLevel < 0.2) {
-                if (Math.random() < 0.3 && fish.length < 50 && plankton.length > 50) {
+                if (Math.random() < 0.3 && fish.length < MAX_FISH && plankton.length > 50) {
                     addOrganisms('fish', Math.floor(Math.random() * 5) + 3);
                     showNotification('migration_fish');
                 }
-                if (Math.random() < 0.2 && birds.length < 30 && allShelterTrees.length > 10) {
-                    addOrganisms('bird', Math.floor(Math.random() * 3) + 2);
+                if (Math.random() < 0.2 && birds.length < MAX_BIRDS && allShelterTrees.length > 10) {
+                    addOrganisms('bird', Math.floor(Math.random() * 3) + 1);
                     showNotification('migration_bird');
                 }
             }
 
-            carbonCredits += mangroves.length * 0.003 + nipaPalms.length * 0.004;
+            carbonCredits += mangroves.length * 0.002 + nipaPalms.length * 0.003;
             allShelterTrees = [...mangroves, ...nipaPalms];
             
-            for (let i = saplings.length - 1; i >= 0; i--) { const s = saplings[i]; s.age++; if (s.age > s.maturityAge) { 
-                if (s.growsInto === 'mangrove') mangroves.push(new Mangrove(s.x, s.y));
-                else nipaPalms.push(new NipaPalm(s.x, s.y));
-                saplings.splice(i, 1); carbonCredits += 5; } 
+            for (let i = saplings.length - 1; i >= 0; i--) { 
+                const s = saplings[i]; 
+                s.age++;
+                if (s.age >= s.maturityAge) { 
+                    if (s.growsInto === 'mangrove' && mangroves.length + nipaPalms.length + saplings.length - 1 < MAX_PLANTS) { 
+                        mangroves.push(new Mangrove(s.x, s.y));
+                    } else if (s.growsInto === 'nipaPalm' && mangroves.length + nipaPalms.length + saplings.length - 1 < MAX_PLANTS) {
+                        nipaPalms.push(new NipaPalm(s.x, s.y));
+                    }
+                    saplings.splice(i, 1);
+                    carbonCredits += 5;
+                } 
             }
             
             const totalPlants = mangroves.length + nipaPalms.length + saplings.length;
             if (totalPlants < MAX_PLANTS) {
                 allShelterTrees.forEach(tree => {
-                    if (Math.random() < 0.0001) {
-                        const newX = tree.x + (Math.random() * 80 - 40);
-                        const newY = tree.y + (Math.random() * 80 - 40);
-                        saplings.push(new Sapling(newX, newY));
+                    if (Math.random() < 0.00005) {
+                        const newX = tree.x + (Math.random() * 100 - 50);
+                        const newY = tree.y + (Math.random() * 100 - 50);
+                        if (newX >= 0 && newX <= ecoCanvas.width && newY >= 0 && newY <= ecoCanvas.height) {
+                            saplings.push(new Sapling(newX, newY));
+                        }
                     }
                 });
             }
 
-            ecoCtx.clearRect(0, 0, ecoCanvas.width, ecoCanvas.height); ecoCtx.textAlign = "center"; ecoCtx.textBaseline = "middle";
+            ecoCtx.clearRect(0, 0, ecoCanvas.width, ecoCanvas.height); 
+            ecoCtx.textAlign = "center"; 
+            ecoCtx.textBaseline = "middle";
+            plankton = plankton.filter(p => p.update()); // Lọc tảo đã chết
             [...mangroves, ...nipaPalms, ...saplings, ...plankton].forEach(e => e.draw(ecoCtx));
-            const updateAndDraw = (arr) => { arr = arr.filter(e => e.energy > 0 && e.age < e.maxAge); arr.forEach(e => { e.update(); e.draw(ecoCtx); }); return arr; };
-            crabs = updateAndDraw(crabs); fish = updateAndDraw(fish); monkeys = updateAndDraw(monkeys); birds = updateAndDraw(birds);
+            const updateAndDraw = (arr) => { 
+                arr = arr.filter(item => item.energy > 0 && item.age < item.maxAge); 
+                arr.forEach(e => { e.update(); e.draw(ecoCtx); }); 
+                return arr;
+            };
+            crabs = updateAndDraw(crabs); 
+            fish = updateAndDraw(fish); 
+            monkeys = updateAndDraw(monkeys); 
+            birds = updateAndDraw(birds);
             
-            updateUI();
+            if (gameTime % 5 === 0) updateUI();
             requestAnimationFrame(animate);
         }
 
@@ -479,13 +936,13 @@
             canvasContainer.style.height = `${newHeight}px`;
 
             ecoCanvas.width = canvasContainer.clientWidth;
-            ecoCanvas.height = canvasContainer.clientHeight;
+            ecoCanvas.height = newHeight;
             initPriceChart();
         }
         function resetSimulation() {
             plankton = []; crabs = []; monkeys = []; mangroves = []; fish = []; birds = []; saplings = []; nipaPalms = [];
-            gameTime = 0; pollutionLevel = 0; carbonCredits = 0; money = 1000; lastCSRCall = -5000; priceHistory = [];
-            addOrganisms('mangrove', 3); addOrganisms('nipaPalm', 2); addOrganisms('plankton', 60); addOrganisms('crab', 15); addOrganisms('fish', 20); addOrganisms('monkey', 4); addOrganisms('bird', 5);
+            gameTime = 0; pollutionLevel = 0; carbonCredits = 0; money = 1000; lastCSRCall = -5000; csrCount = 0; priceHistory = [];
+            addOrganisms('mangrove', 6); addOrganisms('nipaPalm', 4); addOrganisms('plankton', 100); addOrganisms('crab', 20); addOrganisms('fish', 25); addOrganisms('monkey', 5); addOrganisms('bird', 8);
             fetchCarbonPrice();
             initPriceChart();
         }
@@ -497,7 +954,7 @@
         window.addEventListener('resize', resizeCanvases);
         resizeCanvases();
         resetSimulation();
-        updateLanguage('vi'); // Bắt đầu bằng tiếng Việt
+        updateLanguage('vi');
         animate();
     </script>
 </body>
