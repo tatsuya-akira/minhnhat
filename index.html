@@ -602,8 +602,8 @@
             if (money >= cost && !window[introductionFlag]) {
                 money -= cost;
                 spawnFunction();
-                window[introductionFlag] = true;
-                getEl(buttonId).disabled = true;
+                // window[introductionFlag] = true;
+                // getEl(buttonId).disabled = true;
                 showNotification('notif_species_added', 'success');
             }
         }
